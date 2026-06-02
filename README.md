@@ -17,8 +17,10 @@
 - **实时监控** — WebSocket 连接 douyinLive 代理，监听弹幕/礼物/进场/在线人数
 - **自动录制** — 检测到开播自动开始记录，下播自动保存
 - **数据持久化** — 每 10 秒直写 MySQL，弹幕、礼物、进场记录完整
-- **图片报告** — Playwright 截图生成可视化直播报告
-- **飞书推送** — 开播提醒、下播报告自动推送到飞书群
+- **图片报告** — Playwright 截图生成可视化直播报告（含AI叙事总结）
+- **飞书推送** — 下播报告自动推送到飞书群
+- **用户画像** — 通过 secUid 查询用户资料，生成身份卡片
+- **连击去重** — 智能识别抖音礼物连击帧，去重后统计真实送礼数据
 - **任意切换房间** — 改配置重启即可切换监控目标
 
 ## 架构
@@ -28,16 +30,16 @@
                                ↓
                     monitor.js (常驻守护进程)
                     ├─ dbFlush() 每10秒 → MySQL
-                    │   ├─ streamers     主播信息
-                    │   ├─ sessions      直播场次/统计
-                    │   ├─ danmaku       弹幕记录
-                    │   ├─ gifts         礼物记录
-                    │   ├─ members       进场记录
-                    │   └─ online_records 在线人数时序
+                    │   ├─ streamers      主播信息
+                    │   ├─ sessions       直播场次/统计
+                    │   ├─ danmaku        弹幕记录
+                    │   ├─ gifts          礼物记录（含连击元数据）
+                    │   ├─ members        进场记录
+                    │   └─ online_records  在线人数时序
                     │
-                    └─ 报告推送 → report-image.js(Playwright截图)
-                                    ↓
-                          feishu-send.js → 飞书群
+                    └─ 报告推送 → report-image.js (Playwright截图)
+                                    ├── feishu-send.js → 飞书群（自动推送）
+                                    └── --output + message工具 → 私聊DM（主动请求）
 ```
 
 ## 快速开始
@@ -79,23 +81,20 @@ monitor:
 
 > cookie 获取方式：浏览器登录抖音网页版 → F12 → Application → Cookies → 复制完整 cookie 字符串
 
-#### 2. MySQL 数据库
+#### 2. 环境变量
 
-在 `db-mysql.js` 顶部配置数据库连接：
+复制 `.env.example` 为 `.env`，填入数据库连接信息：
 
-```js
-const pool = mysql.createPool({
-  host: 'localhost',
-  user: 'root',
-  password: '密码',
-  database: 'douyinlive',
-  waitForConnections: true,
-  connectionLimit: 10,
-  timezone: '+08:00',
-});
+```bash
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=douyinlive
+DB_PASSWORD=你的数据库密码
+DB_NAME=douyinlive
+DB_POOL=5
 ```
 
-表结构会在首次启动时自动创建。
+> 表结构会在首次启动时自动创建。`.env` 已加入 `.gitignore`，不会被提交。
 
 #### 3. 房间号
 
@@ -114,11 +113,20 @@ const pool = mysql.createPool({
 }
 ```
 
+| 字段 | 说明 |
+|------|------|
+| `room_id` | 抖音直播间房间号 |
+| `exclude_hosts` | 排除的主播名（如房间号本身），不计入主播排名 |
+| `save_json` | 是否同时保存 JSON 文件（默认 false，纯 MySQL） |
+| `feishu.chat_id` | 飞书群 chat_id，用于自动推送下播报告 |
+
 #### 4. 飞书推送（可选）
 
 `feishu-send.js` 使用飞书 Open API（tenant_access_token）发送图片消息。需在 `openclaw.json` 配置飞书应用的 `app_id` / `app_secret`。
 
 ## 使用
+
+### 守护进程
 
 ```bash
 # 启动守护
@@ -130,20 +138,61 @@ node monitor.js stop
 # 查看状态
 node monitor.js status
 
-# 手动生成报告（发到飞书群）
-node report-image.js
+# 手动快照（立即生成报告发飞书群）
+node monitor.js snapshot
+```
 
-# 手动生成报告（保存到本地）
+### 报告生成
+
+```bash
+# 生成当前 session 报告 → 保存到本地（不发飞书群）
 node report-image.js --output
 
-# 查看某人的礼物榜单
+# 指定 session ID
+node report-image.js --session 265 --output
+
+# 从 JSON 文件加载（而非 MySQL）
+node report-image.js --json --output
+```
+
+> ⚠️ **主动请求时，永远加 `--output`！** 不加 `--output` 会直接调 feishu-send.js 发到群聊。
+> 保存后使用 `message` 工具发到当前 DM 对话。
+
+### 礼物榜单
+
+```bash
+# 生成送给某人的礼物榜单（谁送给了XX）
 node report-image.js --to "主播名" --output
 
-# 查看全场礼物榜单
-node report-image.js --all --output
+# 生成某用户的送礼明细
+node report-image.js --user "用户名" --output
 
-# 生成用户身份卡片
-node user-card.js <secUid> --output
+# 全场礼物排名
+node report-image.js --all --output
+node report-image.js --all --highlight "用户名" --output
+```
+
+### 用户查询
+
+```bash
+# 查询神秘人/用户，生成身份卡片
+node user-card.js <secUid> [数据库昵称] --output
+```
+
+身份卡片包含：头像 + 真名 + 抖音号 + 粉丝/关注 + 签名
+
+### 其他工具
+
+```bash
+# 合并多场 session 数据
+# 编辑 merge-sessions.js 顶部的 sessionIds 数组
+node merge-sessions.js
+
+# 修复数据库记录
+node fix-db.js
+
+# 生成感谢榜图片
+node thanks-rank.js
 
 # WS 消息调试
 node ws-debug.js <room_id>
@@ -154,7 +203,7 @@ node ws-debug.js <room_id>
 | 消息类型 | 处理方式 |
 |---------|---------|
 | `WebcastChatMessage` | 弹幕 → `danmaku` 表 |
-| `WebcastGiftMessage` | 礼物 → `gifts` 表（含连击去重） |
+| `WebcastGiftMessage` | 礼物 → `gifts` 表（含连击元数据） |
 | `WebcastMemberMessage` | 进场 → `members` 表 |
 | `WebcastLikeMessage` | 点赞计数 |
 | `WebcastSocialMessage` | 关注计数 |
@@ -163,21 +212,73 @@ node ws-debug.js <room_id>
 | `WebcastPrivilegeScreenChatMessage` | 特权飘屏（标记 `[飘屏]` 前缀） |
 | `WebcastFansclubMessage` | 粉丝团状态通知（不记礼物） |
 
+> 注意：当前 douyinLive 二进制版本不转发 ScreenChat/Fansclub 消息。
+
 ## 数据表
 
-### gifts
+### gifts（礼物记录）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INT PK | |
+| session_id | INT FK | 关联 sessions |
+| nickname | VARCHAR | 送礼人昵称 |
+| avatar | TEXT | 送礼人头像 URL |
+| user_display_id | VARCHAR | 送礼人 displayId |
+| user_sec_uid | VARCHAR | 送礼人 secUid |
+| gift_name | VARCHAR | 礼物名 |
+| diamond_count | INT | 单价（钻） |
+| repeat_count | INT | 数量 |
+| total_diamonds | INT | 总价 = 单价 × 数量 |
+| to_nickname | VARCHAR | 收礼人 |
+| to_user_display_id | VARCHAR | 收礼人 displayId |
+| to_user_sec_uid | VARCHAR | 收礼人 secUid |
+| combo_count | INT | 当前帧连击数 |
+| repeat_end | TINYINT | 连击终结帧标记（1=终结） |
+| send_type | TINYINT | 发送类型（1/4=连击 5=单次） |
+| create_time | BIGINT | 时间戳（毫秒） |
+
+> ⚠️ 送礼统计必须用 `comboDedupGifts()` 去重，不能直接 SUM。去重 key：`(user_display_id, gift_name, to_user_display_id)` 三分组。
+
+### danmaku（弹幕记录）
 
 | 字段 | 说明 |
 |------|------|
-| nickname | 送礼人 |
-| gift_name | 礼物名（含限定版前缀自动合并） |
-| diamond_count | 单价（钻） |
-| total_diamonds | 总价 = 单价 × 数量 |
-| to_nickname | 收礼人 |
-| combo_count | 连击数 |
-| repeat_end | 连击终结标记 |
+| nickname | 用户名 |
+| content | 弹幕内容 |
+| user_display_id | 用户 displayId |
+| user_sec_uid | 用户 secUid |
+| create_time | 时间戳 |
 
-礼物数据在加载时做连击去重，原始全量数据保留在 MySQL。
+### members（进场记录）
+
+| 字段 | 说明 |
+|------|------|
+| nickname | 用户名 |
+| avatar | 头像 URL |
+| user_display_id | 用户 displayId |
+| user_sec_uid | 用户 secUid |
+| create_time | 时间戳 |
+
+## 连击去重逻辑
+
+礼物入库时**全量写入**（所有 WebSocket 帧都进 MySQL），在**加载数据时**做 combo 去重：
+
+- 函数 `comboDedupGifts(gifts)`（位于 report-image.js）
+- 按 `(user_display_id || nickname, gift_name, to_user_display_id)` 三分组
+- `comboCount` 连续递增(1→2→3) → 同一连击
+- 同值+`repeatEnd` → 归入该组
+- 帧序错乱时（如 combo 4 在 3 之前到达）→ 按 combo_count 排序取最高
+- 每组只保留 comboCount 最大的那条
+
+## 直播总结
+
+report-image.js 的直播总结采用叙事体生成，根据实际数据动态组织语言：
+
+- **热度定调** — 根据进场人数判断（>3000 "开播即爆" / >1000 "人气不错"）
+- **弹幕氛围** — 分析弹幕内容（拉关注 / 打call / 笑声），而非列数字
+- **进场节奏** — 用时段分布说故事（"晚上18点开播就直接拉满"）
+- **关注收尾** — 自然收束（"结束时95人点了关注"）
 
 ## 切换房间
 
@@ -186,6 +287,10 @@ node monitor.js stop
 # 编辑 runtime-config.json 修改 room_id
 node monitor.js
 ```
+
+## 数据库恢复
+
+如需重建数据库，可从 MySQL 导出后用 `fix-db.js` 修复特定记录（如钻石跑车价格修正）。
 
 ## 致谢
 
