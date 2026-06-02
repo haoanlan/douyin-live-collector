@@ -18,7 +18,7 @@
 - **自动录制** — 检测到开播自动开始记录，下播自动保存
 - **数据持久化** — 每 10 秒直写 MySQL，弹幕、礼物、进场记录完整
 - **图片报告** — Playwright 截图生成可视化直播报告（含AI叙事总结）
-- **飞书推送** — 下播报告自动推送到飞书群
+- **飞书推送** — 下播报告通过飞书 Open API（tenant_access_token）自动推送到飞书群
 - **用户画像** — 通过 secUid 查询用户资料，生成身份卡片
 - **连击去重** — 智能识别抖音礼物连击帧，去重后统计真实送礼数据
 - **任意切换房间** — 改配置重启即可切换监控目标
@@ -32,14 +32,13 @@
                     ├─ dbFlush() 每10秒 → MySQL
                     │   ├─ streamers      主播信息
                     │   ├─ sessions       直播场次/统计
-                    │   ├─ danmaku        弹幕记录
-                    │   ├─ gifts          礼物记录（含连击元数据）
+                    │   ├─ danmaku        弹幕记录（含飘屏弹幕）
+                    │   ├─ gifts          礼物记录（含连击元数据、星守护）
                     │   ├─ members        进场记录
                     │   └─ online_records  在线人数时序
                     │
-                    └─ 报告推送 → report-image.js (Playwright截图)
-                                    ├── feishu-send.js → 飞书群（自动推送）
-                                    └── --output + message工具 → 私聊DM（主动请求）
+                    └─ 下播后 → report-image.js (Playwright截图)
+                                    └── feishu-send.js → 飞书群（tenant_access_token 自动推送）
 ```
 
 ## 快速开始
@@ -89,7 +88,7 @@ monitor:
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=douyinlive
-DB_PASSWORD=你的数据库密码
+DB_PASSWORD=***
 DB_NAME=douyinlive
 DB_POOL=5
 ```
@@ -106,7 +105,6 @@ DB_POOL=5
   "check_interval_seconds": 30,
   "reconnect_delay_seconds": 10,
   "save_json": false,
-  "exclude_hosts": [],
   "feishu": {
     "chat_id": "oc_xxx"
   }
@@ -116,13 +114,10 @@ DB_POOL=5
 | 字段 | 说明 |
 |------|------|
 | `room_id` | 抖音直播间房间号 |
-| `exclude_hosts` | 排除的主播名（如房间号本身），不计入主播排名 |
 | `save_json` | 是否同时保存 JSON 文件（默认 false，纯 MySQL） |
-| `feishu.chat_id` | 飞书群 chat_id，用于自动推送下播报告 |
+| `feishu.chat_id` | 飞书群 chat_id，下播报告自动推送到此群 |
 
-#### 4. 飞书推送（可选）
-
-`feishu-send.js` 使用飞书 Open API（tenant_access_token）发送图片消息。需在 `openclaw.json` 配置飞书应用的 `app_id` / `app_secret`。
+> 主播排名自动排除直播间账号（room_author），无需手动配置。如需额外排除其他主播名，可在 `runtime-config.json` 添加 `exclude_hosts` 数组。
 
 ## 使用
 
@@ -145,7 +140,7 @@ node monitor.js snapshot
 ### 报告生成
 
 ```bash
-# 生成当前 session 报告 → 保存到本地（不发飞书群）
+# 生成当前 session 报告 → 保存到本地
 node report-image.js --output
 
 # 指定 session ID
@@ -155,8 +150,7 @@ node report-image.js --session 265 --output
 node report-image.js --json --output
 ```
 
-> ⚠️ **主动请求时，永远加 `--output`！** 不加 `--output` 会直接调 feishu-send.js 发到群聊。
-> 保存后使用 `message` 工具发到当前 DM 对话。
+> 下播后报告自动通过飞书 Open API（tenant_access_token）推送到飞书群，无需手动操作。
 
 ### 礼物榜单
 
@@ -188,9 +182,6 @@ node user-card.js <secUid> [数据库昵称] --output
 # 编辑 merge-sessions.js 顶部的 sessionIds 数组
 node merge-sessions.js
 
-# 修复数据库记录
-node fix-db.js
-
 # 生成感谢榜图片
 node thanks-rank.js
 
@@ -208,11 +199,9 @@ node ws-debug.js <room_id>
 | `WebcastLikeMessage` | 点赞计数 |
 | `WebcastSocialMessage` | 关注计数 |
 | `WebcastRoomStatsMessage` | 在线人数时序 |
-| `WebcastScreenChatMessage` | 飘屏弹幕（标记 `[飘屏]` 前缀） |
-| `WebcastPrivilegeScreenChatMessage` | 特权飘屏（标记 `[飘屏]` 前缀） |
-| `WebcastFansclubMessage` | 粉丝团状态通知（不记礼物） |
-
-> 注意：当前 douyinLive 二进制版本不转发 ScreenChat/Fansclub 消息。
+| `WebcastScreenChatMessage` | 飘屏弹幕 → `danmaku` 表（标记 `[飘屏]` 前缀） |
+| `WebcastPrivilegeScreenChatMessage` | 特权飘屏 → `danmaku` 表（标记 `[飘屏]` 前缀） |
+| `WebcastFansclubMessage` | action=7 星守护 → 转为礼物记录（1280钻/月）；其他 action 不记录 |
 
 ## 数据表
 
@@ -245,7 +234,7 @@ node ws-debug.js <room_id>
 | 字段 | 说明 |
 |------|------|
 | nickname | 用户名 |
-| content | 弹幕内容 |
+| content | 弹幕内容（飘屏弹幕带 `[飘屏]` 前缀） |
 | user_display_id | 用户 displayId |
 | user_sec_uid | 用户 secUid |
 | create_time | 时间戳 |
@@ -287,10 +276,6 @@ node monitor.js stop
 # 编辑 runtime-config.json 修改 room_id
 node monitor.js
 ```
-
-## 数据库恢复
-
-如需重建数据库，可从 MySQL 导出后用 `fix-db.js` 修复特定记录（如钻石跑车价格修正）。
 
 ## 致谢
 
