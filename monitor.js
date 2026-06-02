@@ -487,6 +487,14 @@ function handleMessage(data) {
         '闪耀星辰': 99,
         // 限定版礼物（displayText 取的名称，与 diamondCount 不同）
         '钻石跑车': 1500,
+        '豪华跑车': 1200,
+        '钻石兔兔': 360,
+        '钻石热气球': 620,
+        '钻石火箭': 12001,
+        '钻石飞艇': 23333,
+        '烈焰跑车': 6000,
+        '至尊超跑': 12000,
+        '青绿典藏版嘉年华': 36000,
       };
       const fixedPrice = GIFT_PRICE_MAP[giftName];
       if (fixedPrice !== undefined) {

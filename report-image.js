@@ -259,11 +259,16 @@ const SPECIAL_AVATARS = {
   '萱萱': 'https://p3.douyinpic.com/aweme/100x100/aweme-avatar/tos-cn-i-0813_oA9suPwIGDIAikDATEQAZAJPjkAIIlTBi8xVT.jpeg?from=3067671334'
 };
 
-function findAvatar(data, nickname) {
+function findAvatar(data, nickname, displayId) {
   if (!nickname || !data) return '';
   // 0. 特殊用户覆盖
   if (SPECIAL_AVATARS[nickname]) return SPECIAL_AVATARS[nickname];
-  // 1. 送礼人头像（精确匹配）
+  // 1. 送礼人头像（精确匹配 nickname + display_id）
+  if (displayId) {
+    const g = (data.gifts||[]).find(g => g.nickname === nickname && g.user_display_id === displayId && g.avatar);
+    if (g && g.avatar) return g.avatar;
+  }
+  // 2. 送礼人头像（仅匹配 nickname）
   const g = (data.gifts||[]).find(g => g.nickname === nickname && g.avatar);
   if (g && g.avatar) return g.avatar;
   // 2. 收礼人头像：toUserAvatars（API 缓存）
@@ -352,7 +357,9 @@ function comboDedupGifts(gifts) {
       const curr = items[i];
       const pc = parseInt(String(prev.combo_count || 1), 10);
       const cc = parseInt(String(curr.combo_count || 1), 10);
-      if (cc > pc || (cc === pc && curr.repeat_end === 1)) {
+      // 连击递增时加入序列。同值+repeat_end加入（连击终结帧）。
+      // cc小于pc但>1时也加入（帧序错乱，如combo 4在3之前到）
+      if (cc > pc || (cc === pc && curr.repeat_end === 1) || (cc < pc && cc > 1)) {
         seq.push(curr);
       } else {
         sequences.push(seq);
@@ -365,13 +372,14 @@ function comboDedupGifts(gifts) {
       if (s.length === 1) {
         deduped.push(s[0]);
       } else {
-        const best = s.reduce((a, b) => {
+        // 序列内帧序可能错乱（如combo 4在3之前到），按combo_count排序取最高
+        s.sort((a, b) => {
           const ac = parseInt(String(a.combo_count || 1), 10);
           const bc = parseInt(String(b.combo_count || 1), 10);
-          if (bc !== ac) return bc > ac ? b : a;
-          return b.repeat_end === 1 ? b : a;
+          if (bc !== ac) return bc - ac;
+          return (b.repeat_end === 1 ? 1 : 0) - (a.repeat_end === 1 ? 1 : 0);
         });
-        deduped.push(best);
+        deduped.push(s[0]);
       }
     }
   }
@@ -508,16 +516,20 @@ function generateHTML(data) {
   for (const g of data.gifts || []) {
     // 优先用 secUid 去重，匿名直播间用昵称兜底
     const userKey = g.user_sec_uid || g.user_display_id || g.nickname;
-    if (!giftStats[userKey]) giftStats[userKey] = { diamonds: 0, name: g.nickname };
+    if (!giftStats[userKey]) giftStats[userKey] = { diamonds: 0, name: g.nickname, displayId: g.user_display_id || '' };
     giftStats[userKey].diamonds += parseInt(String(g.total_diamonds), 10) || 0;
   }
   const topGift = Object.entries(giftStats).sort((a, b) => b[1].diamonds - a[1].diamonds).slice(0, 10)
-    .map(([key, s]) => ({ name: s.name, diamonds: s.diamonds }));
+    .map(([key, s]) => ({ name: s.name, diamonds: s.diamonds, displayId: s.displayId }));
 
   const dmStats = {};
-  for (const dm of data.danmaku || []) dmStats[dm.nickname] = (dmStats[dm.nickname] || 0) + 1;
-  const topDanmaku = Object.entries(dmStats).sort((a, b) => b[1] - a[1]).slice(0, 10)
-    .map(([name, count]) => ({ name, count }));
+  for (const dm of data.danmaku || []) {
+    const dmKey = dm.user_display_id || dm.nickname;
+    if (!dmStats[dmKey]) dmStats[dmKey] = { count: 0, name: dm.nickname, displayId: dm.user_display_id || '' };
+    dmStats[dmKey].count += 1;
+  }
+  const topDanmaku = Object.entries(dmStats).sort((a, b) => b[1].count - a[1].count).slice(0, 10)
+    .map(([key, s]) => ({ name: s.name, count: s.count, displayId: s.displayId }));
 
   const startTime = new Date(data.start_time).toLocaleString('zh-CN', {
     month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai'
@@ -528,32 +540,93 @@ function generateHTML(data) {
 
   // 提取代表性弹幕（按内容频率统计，取全场讨论最多的话题）
   const dmSamples = (() => {
+    const hotStopWords = new Set(['萱萱','萱','西柠','亦荷','曦禾','哈哈','哈哈哈','哈哈哈哈','哈哈哈哈哈哈','666','加油','啊啊啊','呜呜','嘻嘻','嘿嘿','帅','6','5','1','啊','哦','嗯','？','！','来了','来了来了','好的','可以','不错','支持','关注','点赞','真好看','好看','漂亮','厉害','牛','绝了','笑死','笑死我了','哈哈哈哈哈哈哈']);
     const dms = (data.danmaku || [])
-      .filter(d => d.content && d.content.replace(/\[[^\]]+\]/g,'').trim().length > 2 && !d.content.startsWith('@') && !d.content.startsWith('/'));
+      .filter(d => d.content && d.content.replace(/\[[^\]]+\]/g,'').trim().length >= 5 && !d.content.startsWith('@') && !d.content.startsWith('/'));
     const freq = {};
     for (const d of dms) {
-      const text = d.content.replace(/\[[^\]]+\]/g,'').trim().slice(0, 40);
+      const text = d.content.replace(/\[[^\]]+\]/g,'').trim().slice(0, 50);
+      if (text.length < 5) continue;
+      if (hotStopWords.has(text)) continue;
+      if (/^[\u4e00-\u9fa5]{1,4}$/.test(text)) continue; // 过滤纯名字
+      if (/^[哈笑呵嘿嘻]{2,}$/.test(text)) continue; // 过滤纯笑声
       freq[text] = (freq[text] || 0) + 1;
     }
     return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([text, count]) => '「' + text + '」(' + count + '次)');
   })();
   const dmTag = dmSamples.length ? '观众聊到' + dmSamples.join('、') : '';
 
-  let aiComment = `直播持续${duration}，累计${memberCount}人次进场，${danmakuCount}条弹幕。`;
-  if (danmakuCount === 0 && memberCount < 50) {
-    aiComment = '直播间较为冷清，观众以浏览为主，互动较少。可以考虑增加互动环节提升参与感。';
-  } else if (danmakuCount > 50 || memberCount > 2000) {
-    aiComment = '直播间热度很高！观众互动非常积极，进场人数众多，是一场高热的直播。';
-    if (dmTag) aiComment += ' ' + dmTag;
-  } else if (totalDiamonds > 0) {
-    aiComment = '有忠实粉丝在支持，整体气氛热烈。感谢每一位到场的朋友！';
-    if (dmTag) aiComment += ' ' + dmTag;
-  } else if (likeCount > 10000) {
-    aiComment = '点赞量很高，内容引起了不少观众共鸣。';
-    if (dmTag) aiComment += ' ' + dmTag;
-  } else if (dmTag) {
-    aiComment += ' ' + dmTag;
+  // ─── 直播总结（人感版）───
+  // 从弹幕内容提取"发生了什么"
+  const danmakuTexts = (data.danmaku || []).map(d => (d.content || '').replace(/\[[^\]]+\]/g, '').trim()).filter(t => t.length >= 2);
+  const danmakuFreq = {};
+  danmakuTexts.forEach(t => { const k = t.slice(0, 20); danmakuFreq[k] = (danmakuFreq[k] || 0) + 1; });
+  const topPhrases = Object.entries(danmakuFreq).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  
+  // 找"主要事件"（被提到最多的人/话题）
+  const mentionMap = {};
+  const hostNames = ['萱萱','西柠','亦荷','曦禾','仲冬十六','一颗假头','丸丸','煦桉'];
+  danmakuTexts.forEach(t => {
+    hostNames.forEach(h => { if (t.includes(h)) mentionMap[h] = (mentionMap[h] || 0) + 1; });
+  });
+  const topMention = Object.entries(mentionMap).sort((a, b) => b[1] - a[1])[0];
+  
+  // 进场节奏
+  const memberHours = (data.members || []).map(m => new Date(m.create_time + 8*3600*1000).getUTCHours());
+  const hourCounts = {};
+  memberHours.forEach(h => hourCounts[h] = (hourCounts[h] || 0) + 1);
+  const peakH = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
+  const peakHour = peakH ? parseInt(peakH[0]) : -1;
+  const slowHour = memberHours.length > 0 ? Math.min(...memberHours) : -1;
+  
+  // 弹幕氛围词
+  const hasCall = topPhrases.some(p => p[0].includes('打call') || p[0].includes('鼓掌'));
+  const hasFollow = topPhrases.some(p => p[0].includes('关注') || p[0].includes('点点'));
+  const hasLaugh = danmakuTexts.some(t => /[哈笑]{3,}/.test(t));
+  
+  // ─── 写故事 ───
+  let s = '';
+  
+  // 开场定调
+  if (memberCount > 3000) {
+    s += `一开播人就涌进来了，${memberCount}人次赶了这场。`;
+  } else if (memberCount > 1000) {
+    s += `今晚${memberCount}人到场，人气不错。`;
+  } else {
+    s += `${memberCount}人进了直播间。`;
   }
+  
+  // 高峰节奏
+  if (peakHour >= 0) {
+    const tStr = peakHour < 12 ? '中午' : peakHour < 18 ? '下午' : '晚上';
+    if (peakHour === memberHours[0]) {
+      s += `${tStr}${peakHour}点开播就直接拉满。`;
+    } else {
+      s += `到了${tStr}${peakHour}点人最多。`;
+    }
+  }
+  
+  // 弹幕在聊什么（人话版）
+  if (hasFollow) {
+    s += `弹幕里都在喊"点点关注"，观众比主播还急。`;
+  } else if (hasCall) {
+    s += `满屏打call，气氛拉满。`;
+  } else if (topMention) {
+    s += `大家一直在聊${topMention[0]}。`;
+  }
+  
+  if (hasLaugh) {
+    s += `直播间笑声不断。`;
+  }
+  
+  // 关注收尾
+  if (followCount > 500) {
+    s += `最后涨了${followCount}个关注，血赚。`;
+  } else if (followCount > 30) {
+    s += `结束时${followCount}人点了关注。`;
+  }
+  
+  const aiComment = s || `${memberCount}人参加了这场直播。`;
 
   const isHot = danmakuCount > 50 || memberCount > 2000;
   const theme = isHot
@@ -563,14 +636,14 @@ function generateHTML(data) {
   const giftRows = topGift.map((u, i) => {
     const isTop3 = i < 3;
     const top3cls = isTop3 ? ` class="row-top3 row-${['1st','2nd','3rd'][i]}"` : '';
-    const av = findAvatar(data, u.name);
+    const av = findAvatar(data, u.name, u.displayId);
     const dn = cleanDisplayName(u.name);
     return `<tr${top3cls}><td class="rank">${rankBadge(i)}</td><td class="name"><span class="name-wrap">${avatarImg(av, 24, dn)}<span class="name-text gift-text" title="${u.name}">${dn}</span></span></td><td class="diamonds"><span class="d-wrap"><span class="d-val">${fmtNum(u.diamonds)}</span><span class="d-unit">${ICO.diamond}</span></span></td></tr>`;
   }).join('');
   const dmRows = topDanmaku.map((u, i) => {
     const isTop3 = i < 3;
     const top3cls = isTop3 ? ` class="row-top3 row-${['1st','2nd','3rd'][i]}"` : '';
-    const av = findAvatar(data, u.name);
+    const av = findAvatar(data, u.name, u.displayId);
     const dn2 = cleanDisplayName(u.name);
     return `<tr${top3cls}><td class="rank">${rankBadge(i)}</td><td class="name"><span class="name-wrap">${avatarImg(av, 24, dn2)}<span class="name-text dm-text" title="${u.name}">${dn2}</span></span></td><td class="diamonds"><span class="d-wrap"><span class="d-val">${u.count}</span><span class="d-unit"> 条</span></span></td></tr>`;
   }).join('');
@@ -985,7 +1058,7 @@ function htmlWrap(theme, bodyContent) {
     margin-bottom: 6px; letter-spacing: 0.5px;
   }
   .ai-text {
-    font-size: 13px; color: rgba(255,255,255,0.6); line-height: 1.6;
+    font-size: 13px; color: rgba(255,255,255,0.65); line-height: 1.6;
   }
 
   /* 底部 */
