@@ -135,7 +135,7 @@ function loadConfig() {
     check_interval_seconds: 30,
     reconnect_delay_seconds: 10,
     save_json: false,
-    feishu: { open_id: 'ou_32ab67ab7728a3f29ab6719f142b85b6' },
+    feishu: { open_id: '' },
   };
 }
 
@@ -328,8 +328,8 @@ async function generateAndSendReport() {
       return;
     }
     const config = loadConfig();
-    const openId = config.feishu?.open_id || 'ou_32ab67ab7728a3f29ab6719f142b85b6';
-
+    const openId = config.feishu?.open_id || '';
+    if (!openId) { console.error('[report] feishu.open_id 未配置'); return; }
     // 生成直播报告图片
     const pngPath = await reportImg.generateImage(data);
     const sent = await feishu.sendImage(openId, pngPath, 'open_id');
@@ -862,8 +862,9 @@ function startConnection(roomId, config) {
             console.log(`[daemon] 🔴 检测到开播！`);
             // 发开播通知（livename 可能为空，用房间号兜底）
             const liveName = data.livename || data.livenameAlias || '';
-            const roomTag = roomId === '72288034336' ? '林语巷' : roomId;
-            const openId = config.feishu?.open_id || 'ou_32ab67ab7728a3f29ab6719f142b85b6';
+            const roomTag = roomId;
+            const openId = config.feishu?.open_id || '';
+            if (!openId) { console.error('[daemon] feishu.open_id 未配置'); return; }
             feishu.sendText(openId, '🔴 ' + (liveName || roomTag) + ' 开播啦！\n' + (data.title || ''), 'open_id').catch(() => {});
             session = createSession(roomId);
             session.room_title = data.title || '';
@@ -1113,7 +1114,8 @@ if (require.main === module) {
         }
         const config = loadConfig();
         const pngPath = await reportImg.generateImage(data);
-        const openId = config.feishu?.open_id || 'ou_32ab67ab7728a3f29ab6719f142b85b6';
+        const openId = config.feishu?.open_id || '';
+        if (!openId) { console.log(JSON.stringify({ type: 'snapshot', error: 'feishu.open_id 未配置' })); process.exit(1); }
         const ok = await feishu.sendImage(openId, pngPath, 'open_id');
         try { fs.unlinkSync(pngPath); } catch(e){}
         if (ok) {
@@ -1139,7 +1141,8 @@ if (require.main === module) {
         }
         const config = loadConfig();
         const pngPath = await reportImg.generateImage(data);
-        const openId = config.feishu?.open_id || 'ou_32ab67ab7728a3f29ab6719f142b85b6';
+        const openId = config.feishu?.open_id || '';
+        if (!openId) { console.log('feishu.open_id 未配置'); return; }
         const ok = await feishu.sendImage(openId, pngPath, 'open_id');
         if (ok) {
           console.log('图片报告已发送 ✅');

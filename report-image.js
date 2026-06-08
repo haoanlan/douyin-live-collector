@@ -65,8 +65,11 @@ function loadJson() {
 async function loadFromDb(sessionId) {
   const mysql = require('mysql2/promise');
   const pool = mysql.createPool({
-    host: '1Panel-mysql-aF5P', port: 3306, user: 'douyinlive',
-    password: '${DB_PASSWORD}', database: 'douyinlive',
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '3306', 10),
+    user: process.env.DB_USER || 'douyinlive',
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME || 'douyinlive',
     timezone: '+08:00', connectionLimit: 2
   });
   try {
@@ -161,8 +164,11 @@ async function loadFromDb(sessionId) {
 async function getLatestSessionId(roomId) {
   const mysql = require('mysql2/promise');
   const pool = mysql.createPool({
-    host: '1Panel-mysql-aF5P', port: 3306, user: 'douyinlive',
-    password: '${DB_PASSWORD}', database: 'douyinlive', connectionLimit: 2
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '3306', 10),
+    user: process.env.DB_USER || 'douyinlive',
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME || 'douyinlive', connectionLimit: 2
   });
   try {
     if (roomId) {
@@ -540,7 +546,7 @@ function generateHTML(data) {
 
   // 提取代表性弹幕（按内容频率统计，取全场讨论最多的话题）
   const dmSamples = (() => {
-    const hotStopWords = new Set(['萱萱','萱','西柠','亦荷','曦禾','哈哈','哈哈哈','哈哈哈哈','哈哈哈哈哈哈','666','加油','啊啊啊','呜呜','嘻嘻','嘿嘿','帅','6','5','1','啊','哦','嗯','？','！','来了','来了来了','好的','可以','不错','支持','关注','点赞','真好看','好看','漂亮','厉害','牛','绝了','笑死','笑死我了','哈哈哈哈哈哈哈']);
+    const hotStopWords = new Set(['哈哈','哈哈哈','哈哈哈哈','哈哈哈哈哈哈','666','加油','啊啊啊','呜呜','嘻嘻','嘿嘿','帅','6','5','1','啊','哦','嗯','？','！','来了','来了来了','好的','可以','不错','支持','关注','点赞','真好看','好看','漂亮','厉害','牛','绝了','笑死','笑死我了','哈哈哈哈哈哈哈']);
     const dms = (data.danmaku || [])
       .filter(d => d.content && d.content.replace(/\[[^\]]+\]/g,'').trim().length >= 5 && !d.content.startsWith('@') && !d.content.startsWith('/'));
     const freq = {};
@@ -565,7 +571,12 @@ function generateHTML(data) {
   
   // 找"主要事件"（被提到最多的人/话题）
   const mentionMap = {};
-  const hostNames = ['萱萱','西柠','亦荷','曦禾','仲冬十六','一颗假头','丸丸','煦桉'];
+  // 被提到最多的主播名（从排除列表取，或空数组）
+  const hostNames = (() => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(__dirname, 'runtime-config.json'), 'utf-8')).host_names || [];
+    } catch(e) { return []; }
+  })();
   danmakuTexts.forEach(t => {
     hostNames.forEach(h => { if (t.includes(h)) mentionMap[h] = (mentionMap[h] || 0) + 1; });
   });
@@ -1322,7 +1333,19 @@ async function main() {
   const outputOnly = args.includes('--output');
 
   const feishu = require('./feishu-send.js');
-  const chatId = 'oc_3eda7639e779aaa5f74493c09d2a1881';
+  const sendTo = (() => {
+    try {
+      const c = JSON.parse(fs.readFileSync(path.join(__dirname, 'runtime-config.json'), 'utf-8'));
+      return c.feishu?.chat_id || c.feishu?.open_id || '';
+    } catch(e) { return ''; }
+  })();
+  const sendType = (() => {
+    try {
+      const c = JSON.parse(fs.readFileSync(path.join(__dirname, 'runtime-config.json'), 'utf-8'));
+      return c.feishu?.chat_id ? 'chat_id' : 'open_id';
+    } catch(e) { return 'open_id'; }
+  })();
+  if (!sendTo) { console.error('feishu.chat_id 或 feishu.open_id 未配置'); process.exit(1); }
 
   if (toName) {
     // 筛选送给某个人的礼物
@@ -1464,30 +1487,28 @@ td.name{white-space:nowrap;overflow:hidden;font-weight:700;vertical-align:middle
   <div class="footer" style="text-align:center;padding:10px 24px 14px;font-size:10px;color:rgba(255,255,255,0.3);letter-spacing:0.5px">由 404 · 抖音直播监控 生成</div>
 </div>`);
 
-    const feishu = require('./feishu-send.js');
-    const chatId = 'oc_3eda7639e779aaa5f74493c09d2a1881';
-    const imgPath = await screenshotHTML(html, path.join(DATA_DIR, 'reports', 'report_to_gift.jpg'));
-    if (outputOnly) { console.log(imgPath); return; }
-    const ok = await feishu.sendImage(chatId, imgPath);
-    if (ok) { console.log('送给「' + toName + '」的礼物榜单已发送 ✅'); fs.unlinkSync(imgPath); }
+    const imgPathTo = await screenshotHTML(html, path.join(DATA_DIR, 'reports', 'report_to_gift.jpg'));
+    if (outputOnly) { console.log(imgPathTo); return; }
+    const okTo = await feishu.sendImage(sendTo, imgPathTo, sendType);
+    if (okTo) { console.log('送给「' + toName + '」的礼物榜单已发送 ✅'); fs.unlinkSync(imgPathTo); }
     else { console.error('发送失败'); }
   } else if (nickname) {
     const imgPath = await generateUserImage(data, nickname);
     if (!imgPath) { console.error(`未找到用户「${nickname}」的礼物数据`); process.exit(1); }
     if (outputOnly) { console.log(imgPath); return; }
-    const ok = await feishu.sendImage(chatId, imgPath);
+    const ok = await feishu.sendImage(sendTo, imgPath, sendType);
     if (ok) { console.log(`用户「${nickname}」礼物榜单已发送 ✅`); fs.unlinkSync(imgPath); }
     else { console.error('发送失败'); }
   } else if (allGifts) {
     const imgPath = await generateAllGiftRankingImage(data, highlightName);
     if (outputOnly) { console.log(imgPath); return; }
-    const ok = await feishu.sendImage(chatId, imgPath);
+    const ok = await feishu.sendImage(sendTo, imgPath, sendType);
     if (ok) { console.log('全部送礼榜单已发送 ✅'); fs.unlinkSync(imgPath); }
     else { console.error('发送失败'); }
   } else {
     const imgPath = await generateImage(data);
     if (outputOnly) { console.log(imgPath); return; }
-    const ok = await feishu.sendImage(chatId, imgPath);
+    const ok = await feishu.sendImage(sendTo, imgPath, sendType);
     if (ok) { console.log('报告图片已发送 ✅'); fs.unlinkSync(imgPath); }
     else { console.error('发送失败'); }
   }

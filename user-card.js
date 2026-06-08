@@ -81,8 +81,15 @@ body{font-family:'Noto Sans SC',sans-serif;background:${theme.bg};min-height:100
 
   if (process.argv.includes('--output')) { console.log(imgPath); return; }
 
-  const chatId = 'oc_3eda7639e779aaa5f74493c09d2a1881';
-  const ok = await feishu.sendImage(chatId, imgPath);
+  const sendConfig = (() => {
+    try {
+      return JSON.parse(require('fs').readFileSync(path.join(__dirname, 'runtime-config.json'), 'utf-8')).feishu || {};
+    } catch(e) { return {}; }
+  })();
+  const sendTo = sendConfig.chat_id || sendConfig.open_id || '';
+  const sendType = sendConfig.chat_id ? 'chat_id' : 'open_id';
+  if (!sendTo) { console.error('feishu.chat_id 或 feishu.open_id 未配置'); process.exit(1); }
+  const ok = await feishu.sendImage(sendTo, imgPath, sendType);
   console.log(ok ? '卡片已发送 ✅' : '发送失败');
   fs.unlinkSync(imgPath);
 })().catch(e => { console.error(e); process.exit(1); });
