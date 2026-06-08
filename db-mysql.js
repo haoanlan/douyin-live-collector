@@ -15,7 +15,9 @@ const DB_CONFIG = {
   waitForConnections: true,
   connectionLimit: parseInt(process.env.DB_POOL || '5', 10),
   queueLimit: 0,
-  timezone: '+08:00'
+  timezone: '+08:00',
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0
 };
 
 // 检查密码是否已配置
@@ -446,7 +448,10 @@ async function updateStreamerAvatar(sessionId, avatar) {
 
 /** 关闭连接池 */
 async function close() {
-  if (pool) await pool.end();
+  if (pool) {
+    await pool.end();
+    pool = null;
+  }
 }
 
 /** 插入团员榜单/团播排行数据 */

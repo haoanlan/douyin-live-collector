@@ -167,7 +167,7 @@ async function uploadImage(imagePath, imageType = 'message') {
  * @param {string} imagePath - 本地图片路径
  * @returns {Promise<boolean>} 是否成功
  */
-async function sendImage(chatId, imagePath) {
+async function sendImage(chatId, imagePath, receiveIdType = 'chat_id') {
   const imageKey = await uploadImage(imagePath);
   if (!imageKey) return false;
 
@@ -180,7 +180,7 @@ async function sendImage(chatId, imagePath) {
     content: JSON.stringify({ image_key: imageKey }),
   });
 
-  const url = '/open-apis/im/v1/messages?receive_id_type=chat_id';
+  const url = `/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`;
   const res = await request('POST', FEISHU_HOST, url, {
     'Content-Type': 'application/json',
     'Authorization': 'Bearer ' + token,
@@ -201,7 +201,7 @@ async function sendImage(chatId, imagePath) {
  * @param {string} text - 文本内容
  * @returns {Promise<boolean>}
  */
-async function sendText(chatId, text) {
+async function sendText(chatId, text, receiveIdType = 'chat_id') {
   const token = await getToken();
   if (!token) return false;
 
@@ -211,7 +211,7 @@ async function sendText(chatId, text) {
     content: JSON.stringify({ text }),
   });
 
-  const url = '/open-apis/im/v1/messages?receive_id_type=chat_id';
+  const url = `/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`;
   const res = await request('POST', FEISHU_HOST, url, {
     'Content-Type': 'application/json',
     'Authorization': 'Bearer ' + token,

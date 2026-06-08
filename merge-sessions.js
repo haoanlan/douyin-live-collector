@@ -2,7 +2,7 @@ const mysql = require('mysql2/promise');
 const fs = require('fs');
 
 async function main() {
-  const sessionIds = [259, 260];
+  const sessionIds = [286, 287];
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || '1Panel-mysql-aF5P', port: 3306, user: process.env.DB_USER || 'douyinlive',
     password: process.env.DB_PASSWORD || '${DB_PASSWORD}', database: process.env.DB_NAME || 'douyinlive',
@@ -112,7 +112,7 @@ async function main() {
     gift_count: allGifts.length
   };
 
-  const outPath = '/tmp/merged_sessions_259_260.json';
+  const outPath = '/tmp/merged_sessions_286_287.json';
   // Add the dedup result count for reference
   const { comboDedupGifts: dedup } = (() => {
     // inline the dedup function

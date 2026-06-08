@@ -584,49 +584,119 @@ function generateHTML(data) {
   const hasFollow = topPhrases.some(p => p[0].includes('关注') || p[0].includes('点点'));
   const hasLaugh = danmakuTexts.some(t => /[哈笑]{3,}/.test(t));
   
-  // ─── 写故事 ───
-  let s = '';
-  
-  // 开场定调
-  if (memberCount > 3000) {
-    s += `一开播人就涌进来了，${memberCount}人次赶了这场。`;
-  } else if (memberCount > 1000) {
-    s += `今晚${memberCount}人到场，人气不错。`;
-  } else {
-    s += `${memberCount}人进了直播间。`;
+  // ─── 写故事（事实版）───
+  // 纯粹从数据里提取事实，不做假设
+  const danmakuRaw = (data.danmaku || []).map(d => ({
+    text: (d.content || '').replace(/\[[^\]]+\]/g, '').trim(),
+    raw: d.content || '',
+    nick: d.nickname || ''
+  })).filter(d => d.text.length >= 2);
+
+  // 被cue最多的主播
+  const hostMentionSorted = Object.entries(mentionMap).sort((a, b) => b[1] - a[1]);
+  const topHost = hostMentionSorted[0];
+  const secondHost = hostMentionSorted[1];
+  const thirdHost = hostMentionSorted[2];
+
+  // ─── 1. 大礼物事件（含收礼人） ───
+  const bigGifts = (data.gifts || [])
+    .filter(g => (parseInt(String(g.total_diamonds), 10) || 0) >= 1000)
+    .sort((a, b) => (parseInt(String(b.total_diamonds), 10) || 0) - (parseInt(String(a.total_diamonds), 10) || 0));
+
+  // 按送礼人聚合（用 secUid 去重，防同昵称不同人）
+  const gifterMap = {};
+  for (const g of bigGifts) {
+    const key = g.user_sec_uid || g.user_display_id || g.nickname;
+    if (!gifterMap[key]) gifterMap[key] = { name: g.nickname, gifts: [], total: 0 };
+    gifterMap[key].gifts.push({ name: g.gift_name, diamonds: parseInt(String(g.total_diamonds), 10) || 0, to: g.to_nickname || '' });
+    gifterMap[key].total += parseInt(String(g.total_diamonds), 10) || 0;
   }
-  
-  // 高峰节奏
-  if (peakHour >= 0) {
-    const tStr = peakHour < 12 ? '中午' : peakHour < 18 ? '下午' : '晚上';
-    if (peakHour === memberHours[0]) {
-      s += `${tStr}${peakHour}点开播就直接拉满。`;
+  const topGifters = Object.values(gifterMap).sort((a, b) => b.total - a.total);
+
+  // ─── 2. 有意义的弹幕（不是水词） ───
+  const waterPattern = /^[6哈笑呵嘿\d?！。,.，。]+$/;
+  const followPattern = /点关注|关注|加油|666|来了|可以$/;
+  const meaningfulDms = danmakuRaw.filter(d => {
+    const t = d.text;
+    if (t.length < 4) return false;
+    if (waterPattern.test(t)) return false;
+    if (followPattern.test(t) && t.length < 8) return false;
+    if (/区别对待|我没有|为什么没有|怎么没有|后缀|蛙我|哭给你看/.test(t)) return false;
+    if (/^@\S+\s/.test(t) && t.length < 30) return false;
+    return true;
+  });
+
+  // 按长度+特殊词排序，挑最好的
+  const highlightWords = /咔嚓|短剧|漂亮|C位|合并|请假|带薪|哭|嗨丝|整活|冻|僵硬|打架|battle|好看|帅|可爱/;
+  const highlighted = meaningfulDms
+    .map(d => ({ ...d, score: (highlightWords.test(d.text) ? 100 : 0) + d.text.length }))
+    .sort((a, b) => b.score - a.score);
+  const bestDm = highlighted[0] || null;
+  const secondDm = highlighted[1] || null;
+
+  // ─── 3. 弹幕整体氛围 ───
+  const laughCount = danmakuRaw.filter(d => /[哈笑]{2,}/.test(d.text)).length;
+  const totalDm = danmakuRaw.length;
+  const laughRatio = totalDm > 0 ? laughCount / totalDm : 0;
+
+  // ─── 4. 拼事实 ───
+  let story = [];
+
+  // 主播出场（只说事实：谁被cue最多）
+  if (topHost && topHost[1] > 0) {
+    if (thirdHost && thirdHost[1] > 3) {
+      story.push('今天被cue最多的是' + topHost[0] + '、' + secondHost[0] + '和' + thirdHost[0] + '。');
+    } else if (secondHost && secondHost[1] > 3) {
+      story.push('弹幕聊得最多的是' + topHost[0] + '和' + secondHost[0] + '。');
     } else {
-      s += `到了${tStr}${peakHour}点人最多。`;
+      story.push('弹幕里' + topHost[0] + '被cue最多。');
     }
   }
-  
-  // 弹幕在聊什么（人话版）
-  if (hasFollow) {
-    s += `弹幕里都在喊"点点关注"，观众比主播还急。`;
-  } else if (hasCall) {
-    s += `满屏打call，气氛拉满。`;
-  } else if (topMention) {
-    s += `大家一直在聊${topMention[0]}。`;
+
+  // 大礼物（只说事实：谁送了什么给谁）
+  if (topGifters.length) {
+    const g = topGifters[0];
+    if (g.gifts.length === 1) {
+      const gi = g.gifts[0];
+      story.push(g.name + '给' + gi.to + '送了' + gi.name + '。');
+    } else {
+      const giftNames = [...new Set(g.gifts.map(gi => gi.name))].slice(0, 3).join('、');
+      story.push(g.name + '送了好几个大礼：' + giftNames + '。');
+    }
   }
-  
-  if (hasLaugh) {
-    s += `直播间笑声不断。`;
+
+  // 弹幕名场面（挑两句最好的）
+  if (bestDm) {
+    story.push('弹幕有人说「' + bestDm.text.slice(0, 25) + '」。');
   }
-  
-  // 关注收尾
-  if (followCount > 500) {
-    s += `最后涨了${followCount}个关注，血赚。`;
-  } else if (followCount > 30) {
-    s += `结束时${followCount}人点了关注。`;
+  if (secondDm && secondDm.text !== bestDm?.text) {
+    story.push('还有「' + secondDm.text.slice(0, 25) + '」。');
   }
-  
-  const aiComment = s || `${memberCount}人参加了这场直播。`;
+
+  // 弹幕之王（用 secUid 去重）
+  const dmCountMap = {};
+  for (const d of data.danmaku || []) {
+    const key = d.user_sec_uid || d.user_display_id || d.nickname || '匿名';
+    if (!dmCountMap[key]) dmCountMap[key] = { name: d.nickname || '匿名', count: 0 };
+    dmCountMap[key].count += 1;
+  }
+  const dmKing = Object.entries(dmCountMap).sort((a, b) => b[1].count - a[1].count)[0];
+  if (dmKing && dmKing[1].count > 3) {
+    story.push('弹幕之王是' + dmKing[1].name + '，发了' + dmKing[1].count + '条。');
+  }
+
+  // 氛围（用比例描述，不用数字）
+  if (laughRatio > 0.15) {
+    story.push('整体氛围挺欢乐的。');
+  } else if (totalDm > 50) {
+    story.push('弹幕聊得挺多。');
+  }
+
+  if (!story.length) {
+    story.push('今天这场直播平稳度过。');
+  }
+
+  const aiComment = story.join('');
 
   const isHot = danmakuCount > 50 || memberCount > 2000;
   const theme = isHot
