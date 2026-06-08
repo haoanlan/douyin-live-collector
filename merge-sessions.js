@@ -5,7 +5,7 @@ async function main() {
   const sessionIds = [286, 287];
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || '1Panel-mysql-aF5P', port: 3306, user: process.env.DB_USER || 'douyinlive',
-    password: process.env.DB_PASSWORD || '${DB_PASSWORD}', database: process.env.DB_NAME || 'douyinlive',
+    password: process.env.DB_PASSWORD, database: process.env.DB_NAME || 'douyinlive',
     timezone: '+08:00', connectTimeout: 3000
   });
 
@@ -89,8 +89,8 @@ async function main() {
     end_time: endTime ? endTime.toISOString() : null,
     room_title: base.room_title,
     room_id: base.room_id,
-    room_author: '林语巷',
-    room_avatar: base.streamer_avatar || 'https://p26.douyinpic.com/aweme/100x100/aweme-avatar/tos-cn-avt-0015_dc2750b7a5025d564f1a67d3d81b710a.jpeg?from=3067671334',
+        room_author: base.room_author || base.room_id || '未知',
+    room_avatar: base.streamer_avatar || '',
     duration_seconds: totalDurationSec,
     online_peak: onlinePeak,
     stats: {
@@ -112,7 +112,7 @@ async function main() {
     gift_count: allGifts.length
   };
 
-  const outPath = '/tmp/merged_sessions_286_287.json';
+  const outPath = '/tmp/merged_sessions_' + sessionIds.join('_') + '.json';
   // Add the dedup result count for reference
   const { comboDedupGifts: dedup } = (() => {
     // inline the dedup function
