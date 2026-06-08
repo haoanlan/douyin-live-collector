@@ -862,12 +862,7 @@ function startConnection(roomId, config) {
             console.log(`[daemon] 🔴 检测到开播！`);
             const openId = config.feishu?.open_id || '';
             if (!openId) { console.error('[daemon] feishu.open_id 未配置'); return; }
-            // 开播通知延迟3秒发，等主播名从其他消息到达
             const roomTag = roomId;
-            setTimeout(() => {
-              const name = session?.room_author || data.livename || data.livenameAlias || '';
-              feishu.sendText(openId, '🔴 ' + (name || roomTag) + ' 开播啦！\n' + (data.title || ''), 'open_id').catch(() => {});
-            }, 5000);
             session = createSession(roomId);
             session.room_title = data.title || '';
             session.room_author = data.livename || '';
@@ -880,6 +875,11 @@ function startConnection(roomId, config) {
               try {
                 const pool = db.getPool();
                 await pool.query('UPDATE sessions SET end_time = NOW() WHERE room_id = ? AND end_time IS NULL', [roomId]);
+                // 查 DB 已有主播名，不从 live_status 等（livename 可能为空）
+                const [rows] = await pool.query('SELECT name FROM streamers WHERE room_id = ? AND name IS NOT NULL AND name != \'\' ORDER BY id DESC LIMIT 1', [roomId]);
+                const streamerName = rows.length > 0 ? rows[0].name : '';
+                const displayName = streamerName || session.room_author || roomTag;
+                feishu.sendText(openId, '🔴 ' + displayName + ' 开播啦！\n' + (data.title || ''), 'open_id').catch(() => {});
                 const streamerId = await db.upsertStreamer(session.room_author || '', roomId, '');
                 dbSessionId = await db.createSession(streamerId, session.room_title, roomId);
                 dbSyncState = { danmaku: 0, gifts: 0, members: 0, online: 0 };
