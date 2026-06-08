@@ -106,7 +106,7 @@ DB_POOL=5
   "reconnect_delay_seconds": 10,
   "save_json": false,
   "feishu": {
-    "chat_id": "oc_xxx"
+    "open_id": "ou_xxx"  // 或 chat_id: "oc_xxx" 推群聊
   }
 }
 ```
@@ -115,7 +115,8 @@ DB_POOL=5
 |------|------|
 | `room_id` | 抖音直播间房间号 |
 | `save_json` | 是否同时保存 JSON 文件（默认 false，纯 MySQL） |
-| `feishu.chat_id` | 飞书群 chat_id，下播报告自动推送到此群 |
+| `feishu.open_id` | 飞书用户 open_id，推送到私聊（与 `chat_id` 二选一） |
+| `feishu.chat_id` | 飞书群 chat_id，推送到群聊（与 `open_id` 二选一） |
 
 > 主播排名自动排除直播间账号（room_author），无需手动配置。如需额外排除其他主播名，可在 `runtime-config.json` 添加 `exclude_hosts` 数组。
 
