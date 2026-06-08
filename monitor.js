@@ -860,12 +860,14 @@ function startConnection(roomId, config) {
           if (isLive && !isRecording) {
             // 🔴 开播
             console.log(`[daemon] 🔴 检测到开播！`);
-            // 发开播通知（livename 可能为空，用房间号兜底）
-            const liveName = data.livename || data.livenameAlias || '';
-            const roomTag = roomId;
             const openId = config.feishu?.open_id || '';
             if (!openId) { console.error('[daemon] feishu.open_id 未配置'); return; }
-            feishu.sendText(openId, '🔴 ' + (liveName || roomTag) + ' 开播啦！\n' + (data.title || ''), 'open_id').catch(() => {});
+            // 开播通知延迟3秒发，等主播名从其他消息到达
+            const roomTag = roomId;
+            setTimeout(() => {
+              const name = session?.room_author || data.livename || data.livenameAlias || '';
+              feishu.sendText(openId, '🔴 ' + (name || roomTag) + ' 开播啦！\n' + (data.title || ''), 'open_id').catch(() => {});
+            }, 3000);
             session = createSession(roomId);
             session.room_title = data.title || '';
             session.room_author = data.livename || '';
