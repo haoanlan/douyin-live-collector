@@ -119,6 +119,13 @@ DB_POOL=5
 | `feishu.chat_id` | 飞书群 chat_id，推送到群聊（与 `open_id` 二选一） |
 
 > 主播排名自动排除直播间账号（room_author），无需手动配置。如需额外排除其他主播名，可在 `runtime-config.json` 添加 `exclude_hosts` 数组。
+>
+> ✅ **所有代码中不包含任何硬编码的个人 ID/房间名/主播名**。换房间只需改 `runtime-config.json` 的 `room_id` 和飞书配置。
+>
+> - 数据库配置走环境变量 `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME`
+> - 飞书推送目标从 `runtime-config.json` 读取
+> - 主播名统计从每场礼物数据的收礼人字段动态提取
+> - `thanks-rank.js` 的目标昵称通过 `--to` CLI 参数传入
 
 ## 使用
 
@@ -167,14 +174,28 @@ node report-image.js --all --output
 node report-image.js --all --highlight "用户名" --output
 ```
 
+### 感谢榜（园区充电榜）
+
+```bash
+# 生成某 session 送给特定主播的感谢榜
+node thanks-rank.js 285 286 287 --to "收礼人昵称"
+
+# 支持指定头像 URL（可选，默认自动从 DB/抖音 API 获取）
+node thanks-rank.js 287 --to "收礼人昵称" --avatar "https://..."
+```
+
+> `--avatar` 可不传，脚本会自动从 members 表或 douyin-user.js 获取收礼人头像。
+
 ### 用户查询
 
 ```bash
-# 查询神秘人/用户，生成身份卡片
+# 查询神秘人/用户，生成身份卡片（可选 --output 仅保存不发飞书）
 node user-card.js <secUid> [数据库昵称] --output
 ```
 
 身份卡片包含：头像 + 真名 + 抖音号 + 粉丝/关注 + 签名
+
+> `user-card.js` 的飞书推送目标从 `runtime-config.json` 读取（chat_id 或 open_id）。
 
 ### 其他工具
 
@@ -183,8 +204,10 @@ node user-card.js <secUid> [数据库昵称] --output
 # 编辑 merge-sessions.js 顶部的 sessionIds 数组
 node merge-sessions.js
 
-# 生成感谢榜图片（支持指定 session）
-node thanks-rank.js 285 286 287
+# 保存 session，发图片报告
+node monitor.js report-image
+# 手动快照（立即生成报告）
+node monitor.js snapshot
 
 # WS 消息调试
 node ws-debug.js <room_id>
