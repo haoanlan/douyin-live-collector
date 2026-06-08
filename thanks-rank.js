@@ -12,7 +12,7 @@ const target = (() => {
   const idx = process.argv.indexOf('--to');
   return idx >= 0 ? process.argv[idx + 1] : process.env.THANK_TO || '';
 })();
-const TARGET_AVATAR = (() => {
+let TARGET_AVATAR = (() => {
   const idx = process.argv.indexOf('--avatar');
   return idx >= 0 ? process.argv[idx + 1] : '';
 })();
@@ -108,7 +108,33 @@ function genHTML(users,pageLabel){const t=activeTheme;const perCol=Math.ceil(use
 return`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600;700;800;900&display=swap');*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Noto Sans SC',-apple-system,BlinkMacSystemFont,sans-serif;background:${t.bg};min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px;position:relative}.bg-pattern{position:fixed;top:0;left:0;width:100%;height:100%;background-image:radial-gradient(circle at 20% 30%,${t.pattern1} 0%,transparent 50%),radial-gradient(circle at 80% 70%,${t.pattern2} 0%,transparent 50%);pointer-events:none}.card{width:540px;max-width:100%;background:${t.cardBg};backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid ${t.cardBorder};border-radius:24px;padding:0;box-shadow:${t.boxShadow};overflow:visible;position:relative;z-index:2}${t.decor?`.card::after{content:'';position:absolute;top:0;left:0;width:100%;height:100%;background-image:url(data:image/svg+xml;base64,${petalsB64});background-size:cover;opacity:0.18;pointer-events:none;z-index:0}`:''}table{width:100%;border-collapse:collapse;table-layout:fixed}tr{border-bottom:1px solid ${t.divider};height:38px}tr:last-child{border-bottom:none}td{padding:0 6px;font-size:15px;color:${t.rowText};vertical-align:middle!important;line-height:1.55}td.rank{width:34px;text-align:center;font-size:15px;font-weight:600;vertical-align:middle!important;line-height:1}.row-1st td.name{color:${t.top3Colors[0]}}.row-2nd td.name{color:${t.top3Colors[1]}}.row-3rd td.name{color:${t.top3Colors[2]}}.row-top3 td{padding:6px 4px;color:${t.top3Name}}td.name{white-space:nowrap;overflow:hidden;font-weight:700;vertical-align:middle!important}.name-wrap{display:inline-flex;align-items:center;gap:4px;height:100%}.name-text{vertical-align:middle;overflow:hidden;text-overflow:ellipsis;display:inline-block}.to-text{max-width:180px}.ranking-grid{display:grid;gap:10px;padding:0}.ranking-col td{padding:0 4px;font-size:15px;vertical-align:middle!important;height:38px}.ranking-col td.rank{width:30px;font-size:15px;vertical-align:middle!important;text-align:center;line-height:1}.ranking-col td.name{white-space:nowrap;overflow:hidden;font-size:15px;display:flex;align-items:center}.ranking-col td.name .name-wrap{display:contents}.ranking-col .name-text{overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}.ranking-col .row-top3 td{padding:0 4px}.footer{text-align:center;padding:10px 24px 14px;font-size:10px;color:${t.footerText};letter-spacing:0.5px}</style></head><body><div class="bg-pattern"></div><div class="card" style="padding:0!important"><div style="display:flex;align-items:center;gap:14px;padding:16px 20px;background:linear-gradient(180deg,${t.headerTint} 0%,transparent 100%);border-bottom:1px solid ${t.dividerHeader}"><div style="width:44px;height:44px;border-radius:50%;background:${t.avatarRing};display:flex;align-items:center;justify-content:center;flex-shrink:0"><img src="${TARGET_AVATAR}" style="width:40px;height:40px;border-radius:50%;object-fit:cover"/></div><div style="flex:1;min-width:0"><div style="font-size:18px;font-weight:700;color:${t.headerTitle};line-height:1.3">${esc(target)}</div><div style="font-size:12px;color:${t.headerDate};margin-top:4px">${HEADER_DATE}</div></div><div style="text-align:right;flex-shrink:0"><div style="font-size:15px;font-weight:800;color:${t.textSecondary};letter-spacing:0.5px">🔋 园区充电榜</div></div></div><div style="font-size:13px;font-weight:700;color:${t.sectionTitle};padding:14px 24px 6px;letter-spacing:0.5px;border-bottom:1px solid ${t.dividerSection}">🔋 园区充电榜 · ${pageLabel}</div><div style="padding:6px 24px 14px"><div class="ranking-grid" style="grid-template-columns:1fr 1fr;gap:10px"><div class="ranking-col"><table style="width:100%;table-layout:fixed"><tbody>${makeRowHTML(left)}</tbody></table></div><div class="ranking-col"><table style="width:100%;table-layout:fixed"><tbody>${makeRowHTML(right)}</tbody></table></div></div></div><div class="footer">由 404 · 抖音直播监控 生成</div></div></body></html>`;}
 
 async function render(html,outPath){const br=await chromium.launch({headless:true});const page=await br.newPage({viewport:{width:600,height:2000},deviceScaleFactor:2});await page.setContent(html,{waitUntil:'domcontentloaded',timeout:30000});await new Promise(r=>setTimeout(r,3000));const bodyHeight=await page.evaluate(()=>document.body.scrollHeight);const y=Math.max(0,Math.floor((bodyHeight-800)/2));await page.screenshot({path:outPath,clip:{x:0,y,width:600,height:800},type:'jpeg',quality:92});await br.close();console.log(`  ✅ ${path.basename(outPath)}`);}
+async function resolveAvatar(targetNickname) {
+  // 已有 --avatar 则不查
+  if (TARGET_AVATAR) return TARGET_AVATAR;
+  try {
+    const pool = await mysql.createPool({host:process.env.DB_HOST,user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,port:process.env.DB_PORT||3306,timezone:'+08:00'});
+    // 从 members 表找目标用户的 secUid（按 nickname 模糊匹配）
+    const [memRows] = await pool.query(
+      'SELECT user_sec_uid, avatar FROM members WHERE nickname LIKE ? AND user_sec_uid IS NOT NULL AND user_sec_uid != "" ORDER BY id DESC LIMIT 1',
+      [targetNickname.substring(0, 4) + '%']
+    );
+    await pool.end();
+    if (memRows.length && memRows[0].avatar) {
+      console.log('[avatar] 从 DB 成员表获取到头像');
+      return memRows[0].avatar;
+    }
+    const secUid = memRows.length ? memRows[0].user_sec_uid : null;
+    if (!secUid) { console.warn('[avatar] 未在 DB 中找到 secUid，使用占位头像'); return ''; }
+    const du = require('./douyin-user.js');
+    const info = await du.fetchUserBySecUid(secUid);
+    if (info && info.avatar) { console.log('[avatar] 已从 douyin-user 获取头像:', info.nickname); return info.avatar; }
+  } catch(e) { console.warn('[avatar] 获取失败:', e.message); }
+  return '';
+}
+
 async function main(){
+  // 自动获取头像
+  TARGET_AVATAR = await resolveAvatar(target);
   // 计算日期范围
   const pool = await mysql.createPool({host:process.env.DB_HOST,user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,port:process.env.DB_PORT||3306,timezone:'+08:00'});
   const [dateRows] = await pool.query('SELECT MIN(create_time) as start_time, MAX(create_time) as end_time FROM gifts WHERE session_id IN (?)', [sessionIds]);
