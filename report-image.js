@@ -571,12 +571,12 @@ function generateHTML(data) {
   
   // 找"主要事件"（被提到最多的人/话题）
   const mentionMap = {};
-  // 被提到最多的主播名（从排除列表取，或空数组）
-  const hostNames = (() => {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(__dirname, 'runtime-config.json'), 'utf-8')).host_names || [];
-    } catch(e) { return []; }
-  })();
+  // 从礼物数据自动提取被送礼的主播/嘉宾名（用于统计弹幕提及）
+  const hostNames = [...new Set((data.gifts || []).map(g => {
+    if (!g.to_nickname) return null;
+    const match = g.to_nickname.match(/^([\u4e00-\u9fa5]+)/);
+    return match ? match[1] : g.to_nickname;
+  }).filter(Boolean))];
   danmakuTexts.forEach(t => {
     hostNames.forEach(h => { if (t.includes(h)) mentionMap[h] = (mentionMap[h] || 0) + 1; });
   });
