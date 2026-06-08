@@ -867,7 +867,7 @@ function startConnection(roomId, config) {
             setTimeout(() => {
               const name = session?.room_author || data.livename || data.livenameAlias || '';
               feishu.sendText(openId, '🔴 ' + (name || roomTag) + ' 开播啦！\n' + (data.title || ''), 'open_id').catch(() => {});
-            }, 3000);
+            }, 5000);
             session = createSession(roomId);
             session.room_title = data.title || '';
             session.room_author = data.livename || '';
